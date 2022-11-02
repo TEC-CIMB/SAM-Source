@@ -4,26 +4,35 @@
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
 #include <esp_wifi.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <Wire.h>
+#include <SPI.h>
 
-#define ARRSIZE 60
-#define VOLT 2
-#define DEVICE 1
-#define BUTTON 4
+#define ARRSIZE 100
+#define DEVICE 0
+#define SDA 6
+#define SCL 7
 
 const char *ssid = "SAM";
 const char *password = "123456789";
 
 WebServer server(80);
-StaticJsonDocument<3000> jsonDocument;
+StaticJsonDocument<5000> jsonDocument;
 char buffer[3000];
 
-int volt[ARRSIZE];
+float x[ARRSIZE];
+float y[ARRSIZE];
+float z[ARRSIZE];
+
 int64_t tim = 0;
-int64_t but = 0;
+
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 
-void push(int val, int *arreglo)
+Adafruit_BNO055 bno;
+
+void push(float val, float *arreglo)
 {
   for (int i = ARRSIZE - 2; i >= 0; i--)
   {
@@ -32,12 +41,22 @@ void push(int val, int *arreglo)
   arreglo[0] = val;
 }
 
-void inicializarPines()
+void inicializar()
 {
-  pinMode(BUTTON, INPUT_PULLUP);
+  Wire.setPins(SDA, SCL);
+  Wire.begin();
+  bno = Adafruit_BNO055();
+  if (!bno.begin())
+  {
+    Serial.print("No BNO055 detected");
+    while (1)
+    {
+      vTaskDelay(1000);
+    }
+  }
 }
 
-void aniadirArreglo(char *nombre, int *arreglo)
+void aniadirArreglo(char *nombre, float *arreglo)
 {
   StaticJsonDocument<2000> aux;
   JsonArray array = aux.to<JsonArray>();
@@ -48,9 +67,13 @@ void aniadirArreglo(char *nombre, int *arreglo)
   jsonDocument[nombre] = array;
 }
 
-void leerVoltaje(int pin, int *arreglo)
+void leerIMU()
 {
-  push(analogRead(pin), arreglo);
+  sensors_event_t event;
+  bno.getEvent(&event);
+  push((float)event.orientation.x, x);
+  push((float)event.orientation.y, y);
+  push((float)event.orientation.z, z);
 }
 
 void getData()
@@ -58,8 +81,9 @@ void getData()
   // Serial.println("Get data");
   jsonDocument.clear();
   jsonDocument["device"] = DEVICE;
-  jsonDocument["time"] = but;
-  aniadirArreglo((char *)"volt", volt);
+  aniadirArreglo((char *)"x", x);
+  aniadirArreglo((char *)"y", y);
+  aniadirArreglo((char *)"z", z);
   serializeJson(jsonDocument, buffer);
   server.send(200, "application/json", buffer);
 }
@@ -104,22 +128,16 @@ void wifi(void *pvParameters)
   for (;;)
   {
     server.handleClient();
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
 
 void hardware(void *pvParameters)
 {
-  inicializarPines();
+  inicializar();
   for (;;)
   {
-    leerVoltaje(VOLT, volt);
-    if (digitalRead(BUTTON) == LOW)
-    {
-      but = tim + millis();
-      Serial.print("Button pressed at: ");
-      Serial.println(but);
-    }
+    leerIMU();
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
